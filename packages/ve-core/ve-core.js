@@ -34,7 +34,7 @@
     route: (typeof location !== "undefined" ? location.pathname : "/"),
     serverUrl: null,
     token: null,
-    features: ["text", "color", "hide", "move", "token", "delete"],
+    features: ["text", "color", "hide", "move", "token", "delete", "layout"],
     pickMode: "click",
     autoFetch: true,
   };
@@ -43,6 +43,7 @@
   var counter = 0;
   var activeEl = null;
   var panelEl = null;
+  var overlayEl = null;
   var hoverEl = null;
 
   // ---- 工具 --------------------------------------------------------------
@@ -123,7 +124,7 @@
     plan.changes.forEach(function (c) {
       try {
         if (c.kind === "style") {
-          sheet.textContent += "[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + "; }\n";
+          sheet.textContent += "[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + " !important; }\n";
         } else if (c.kind === "hide") {
           sheet.textContent += "[" + DATA_ATTR + '="' + c.id + '"] { display: none !important; }\n';
         } else if (c.kind === "text") {
@@ -143,6 +144,8 @@
     });
     tokenSheet.textContent += "}\n";
     if (tokenCount === 0 && tokenSheet.textContent === ":root {\n}\n") tokenSheet.textContent = "";
+    // SPA 重渲染若把浮层移除，这里兜底重新挂回并定位
+    if (activeEl && overlayEl && !overlayEl.parentNode) { try { document.body.appendChild(overlayEl); updateOverlay(activeEl); } catch (e) {} }
   }
 
   // ---- 变更模型 ----------------------------------------------------------
@@ -195,7 +198,7 @@
     tokens.forEach(function (c) { lines.push("  " + c.prop + ": " + c.value + ";"); });
     lines.push("}");
     others.forEach(function (c) {
-      if (c.kind === "style") lines.push("[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + "; }");
+      if (c.kind === "style") lines.push("[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + " !important; }");
       else if (c.kind === "hide") lines.push("[" + DATA_ATTR + '="' + c.id + '"] { display: none !important; }');
       else if (c.kind === "text") lines.push("/* text -> " + c.path + " { content: '" + String(c.value).replace(/'/g, "\\'") + "' } */");
       else if (c.kind === "move") lines.push("/* move -> " + c.path + " { to-index: " + c.value + " } */");
@@ -248,11 +251,121 @@
     syncPanelTo(el);
     positionPanelNear(el);
     highlight(el);
+    showOverlay(el);
   }
   function highlight(el) {
     if (!el) return;
     el.style.outline = "2px solid #16a34a";
     setTimeout(function () { el.style.outline = el.__veOutline || ""; }, 600);
+  }
+
+  // ---- 布局/尺寸：拖拽移动 + 缩放 + 面板输入 -----------------------------
+  function showOverlay(el) {
+    if (!el) return;
+    if (!overlayEl) {
+      overlayEl = document.createElement("div");
+      overlayEl.setAttribute("data-ve-ui", "1");
+      overlayEl.setAttribute("data-ve-overlay", "1");
+      overlayEl.style.cssText = "position:fixed;z-index:2147483598;pointer-events:none;";
+      overlayEl.innerHTML =
+        '<div data-ve-move style="position:absolute;inset:0;cursor:move;pointer-events:auto;border:2px solid #16a34a;border-radius:4px;box-sizing:border-box"></div>' +
+        '<div data-ve-resize style="position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;background:#16a34a;border:2px solid #fff;border-radius:3px;cursor:nwse-resize;pointer-events:auto"></div>';
+      document.body.appendChild(overlayEl);
+      bindDragAndResize();
+    }
+    overlayEl.style.display = "block";
+    updateOverlay(el);
+  }
+  function updateOverlay(el) {
+    if (!overlayEl || !el) return;
+    var r = el.getBoundingClientRect();
+    overlayEl.style.left = r.left + "px";
+    overlayEl.style.top = r.top + "px";
+    overlayEl.style.width = r.width + "px";
+    overlayEl.style.height = r.height + "px";
+  }
+  function hideOverlay() { if (overlayEl) overlayEl.style.display = "none"; }
+  function parseTranslate(el) {
+    var t = (el.style.transform || getComputedStyle(el).transform || "");
+    var m = /translate\(([-0-9.]+)px\s*,\s*([-0-9.]+)px\)/.exec(t);
+    if (m) return { x: parseFloat(m[1]), y: parseFloat(m[2]) };
+    var mm = /matrix\(([^)]+)\)/.exec(getComputedStyle(el).transform || "");
+    if (mm) { var p = mm[1].split(",").map(parseFloat); return { x: p[4] || 0, y: p[5] || 0 }; }
+    return { x: 0, y: 0 };
+  }
+  function bindDragAndResize() {
+    var moveH = overlayEl.querySelector("[data-ve-move]");
+    var resizeH = overlayEl.querySelector("[data-ve-resize]");
+    var drag = null;
+    function onMove(e) {
+      if (!drag) return;
+      if (drag.mode === "move") {
+        var dx = e.clientX - drag.sx + drag.bx;
+        var dy = e.clientY - drag.sy + drag.by;
+        drag.el.style.setProperty("transform", "translate(" + dx + "px," + dy + "px)", "important");
+      } else {
+        var w = Math.max(20, Math.round(drag.sw + (e.clientX - drag.sx)));
+        var h = Math.max(20, Math.round(drag.sh + (e.clientY - drag.sy)));
+        drag.el.style.setProperty("width", w + "px", "important");
+        drag.el.style.setProperty("height", h + "px", "important");
+      }
+      updateOverlay(drag.el);
+    }
+    function onUp() {
+      if (!drag) return;
+      var el = drag.el, id = ensureId(el);
+      if (drag.mode === "move") {
+        var t = parseTranslate(el);
+        upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t.x) + "px," + Math.round(t.y) + "px)" });
+      } else {
+        var r = el.getBoundingClientRect();
+        upsert({ id: id, path: pathOf(el), kind: "style", prop: "width", value: Math.round(r.width) + "px" });
+        upsert({ id: id, path: pathOf(el), kind: "style", prop: "height", value: Math.round(r.height) + "px" });
+      }
+      // 清掉内联样式，改由托管样式表接管（保证重置/重渲染一致）
+      el.style.removeProperty("width");
+      el.style.removeProperty("height");
+      el.style.removeProperty("transform");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      drag = null;
+    }
+    moveH.addEventListener("mousedown", function (e) {
+      if (!activeEl) return;
+      e.preventDefault(); e.stopPropagation();
+      var b = parseTranslate(activeEl);
+      drag = { mode: "move", sx: e.clientX, sy: e.clientY, bx: b.x, by: b.y, el: activeEl };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+    resizeH.addEventListener("mousedown", function (e) {
+      if (!activeEl) return;
+      e.preventDefault(); e.stopPropagation();
+      var r = activeEl.getBoundingClientRect();
+      drag = { mode: "resize", sx: e.clientX, sy: e.clientY, sw: r.width, sh: r.height, el: activeEl };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
+  function bindLayoutInputs(p) {
+    var map = [
+      ["data-ve-width", "width"], ["data-ve-height", "height"], ["data-ve-margin", "margin"],
+      ["data-ve-padding", "padding"], ["data-ve-display", "display"], ["data-ve-flexdir", "flex-direction"],
+      ["data-ve-justify", "justify-content"], ["data-ve-align", "align-items"], ["data-ve-gap", "gap"],
+      ["data-ve-position", "position"], ["data-ve-float", "float"]
+    ];
+    map.forEach(function (pair) {
+      var el = p.querySelector("[" + pair[0] + "]");
+      if (!el) return;
+      var evt = (el.tagName === "SELECT") ? "change" : "input";
+      el.addEventListener(evt, function () {
+        if (!activeEl) return;
+        var id = ensureId(activeEl);
+        var v = el.value.trim();
+        if (!v) { var c = findChange(id, "style", pair[1]); if (c) revertChange(c); return; }
+        upsert({ id: id, path: pathOf(activeEl), kind: "style", prop: pair[1], value: v });
+      });
+    });
   }
 
   // ---- 面板 --------------------------------------------------------------
@@ -290,6 +403,19 @@
           (opts.features.indexOf("hide") >= 0 ? '<button data-ve-hide style="flex:1;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">隐藏</button>' : '') +
           (opts.features.indexOf("delete") >= 0 ? '<button data-ve-del style="flex:1;border:1px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#b91c1c;cursor:pointer">删除</button>' : '') +
         '</div>' : '') +
+      (opts.features.indexOf("layout") >= 0 ?
+        '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">📐 布局 / 尺寸（拖绿框移动，拖右下角缩放）</summary>' +
+          '<div style="margin-top:6px">' +
+            veRow('宽', 'data-ve-width', '高', 'data-ve-height') +
+            veRow('外边距', 'data-ve-margin', '内边距', 'data-ve-padding') +
+            veSelRow('显示', 'data-ve-display', ['block', 'flex', 'inline', 'inline-block', 'grid', 'none']) +
+            veSelRow('排列', 'data-ve-flexdir', ['row', 'column']) +
+            veSelRow('主轴对齐', 'data-ve-justify', ['flex-start', 'center', 'flex-end', 'space-between', 'space-around']) +
+            veSelRow('交叉轴', 'data-ve-align', ['stretch', 'flex-start', 'center', 'flex-end']) +
+            veRow('间距', 'data-ve-gap', '定位', 'data-ve-position') +
+            veSelRow('浮动', 'data-ve-float', ['none', 'left', 'right']) +
+          '</div>' +
+        '</details>' : '') +
       (opts.features.indexOf("token") >= 0 ?
         '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">🎨 设计令牌(:root)</summary>' +
           '<div data-ve-tokens style="margin-top:6px;max-height:160px;overflow:auto"></div>' +
@@ -359,6 +485,8 @@
         p.style.display = "none"; activeEl = null;
       });
     }
+    if (opts.features.indexOf("layout") >= 0) bindLayoutInputs(p);
+
     p.querySelector("[data-ve-export-css]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".css", exportCSS(), "text/css"); });
     p.querySelector("[data-ve-export-json]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".json", JSON.stringify(exportJSON(), null, 2), "application/json"); });
     if (opts.serverUrl) {
@@ -404,6 +532,26 @@
       var fg = findChange(getAssignedId(el) || "", "style", "color");
       panelEl.querySelector("[data-ve-bg]").value = rgbToHex(getComputedStyle(el).backgroundColor) || "#ffffff";
       panelEl.querySelector("[data-ve-fg]").value = rgbToHex(getComputedStyle(el).color) || "#000000";
+    }
+    if (opts.features.indexOf("layout") >= 0 && panelEl) {
+      var cs = getComputedStyle(el);
+      var sv = function (sel, prop, computed) {
+        var e = panelEl.querySelector(sel);
+        if (!e) return;
+        var c = findChange(getAssignedId(el) || "", "style", prop);
+        e.value = c ? c.value : (computed != null ? String(computed) : "");
+      };
+      sv("[data-ve-width]", "width", cs.width);
+      sv("[data-ve-height]", "height", cs.height);
+      sv("[data-ve-margin]", "margin", cs.margin);
+      sv("[data-ve-padding]", "padding", cs.padding);
+      sv("[data-ve-display]", "display", cs.display);
+      sv("[data-ve-flexdir]", "flex-direction", cs.flexDirection);
+      sv("[data-ve-justify]", "justify-content", cs.justifyContent);
+      sv("[data-ve-align]", "align-items", cs.alignItems);
+      sv("[data-ve-gap]", "gap", cs.gap === "normal" ? "" : cs.gap);
+      sv("[data-ve-position]", "position", cs.position);
+      sv("[data-ve-float]", "float", cs.float);
     }
     renderChangesList();
   }
@@ -527,6 +675,7 @@
         document.removeEventListener("click", onPick, true);
         if (hoverEl) { hoverEl.style.outline = hoverEl.__veOutline || ""; hoverEl = null; }
         if (panelEl) panelEl.style.display = "none";
+        if (overlayEl) hideOverlay();
         b.textContent = "🛠 微调";
         b.style.background = "#6366f1";
       }
@@ -543,6 +692,23 @@
     return "#" + [m[1], m[2], m[3]].map(function (x) { return ("0" + parseInt(x, 10).toString(16)).slice(-2); }).join("");
   }
 
+  // 布局面板用的两行输入 / 下拉构造器
+  function veRow(label1, attr1, label2, attr2) {
+    return '<div style="display:flex;gap:6px;align-items:center;margin:4px 0">' +
+      '<span style="width:48px;font-size:11px;color:#6b7280">' + label1 + '</span>' +
+      '<input ' + attr1 + ' placeholder="auto" style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif">' +
+      '<span style="width:48px;font-size:11px;color:#6b7280">' + label2 + '</span>' +
+      '<input ' + attr2 + ' placeholder="auto" style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif">' +
+      '</div>';
+  }
+  function veSelRow(label, attr, optsArr) {
+    var o = '<option value="">不改</option>' + optsArr.map(function (v) { return '<option value="' + v + '">' + v + '</option>'; }).join("");
+    return '<div style="display:flex;gap:6px;align-items:center;margin:4px 0">' +
+      '<span style="width:48px;font-size:11px;color:#6b7280">' + label + '</span>' +
+      '<select ' + attr + ' style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif">' + o + '</select>' +
+      '</div>';
+  }
+
   // ---- 公共 API ----------------------------------------------------------
   function init(userOpts) {
     Object.assign(opts, userOpts || {});
@@ -551,6 +717,9 @@
     if (opts.autoFetch) loadRemote().then(renderAll); else renderAll();
     observe();
     mountToggle();
+    // 滚动 / 窗口尺寸变化时把浮层贴住选中元素
+    window.addEventListener("scroll", function () { if (activeEl && overlayEl) updateOverlay(activeEl); }, true);
+    window.addEventListener("resize", function () { if (activeEl && overlayEl) updateOverlay(activeEl); });
     return api;
   }
   var api = {

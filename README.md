@@ -26,7 +26,7 @@ VisualEditKit 走的是**内嵌式**（我们之前在 SaaS 里做的那种，�
 | 作用域 | 任意站点 | 仅我们自己的应用 | 任何引入了它的应用 |
 | 元素定位 | `data-dm-id` + 托管 `<style>` | 路由级 `localStorage` | `data-ve-id` + 托管 `<style>`（借鉴 DM 的稳健做法） |
 | 持久化 | 单浏览器 `chrome.storage` | 前端 `localStorage` + 我们后端文件 | 前端 `localStorage` **+ 可插拔后端**（文件/PG/你现有库） |
-| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计 |
+| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计/**拖拽移动+缩放+布局尺寸面板** |
 | 改源码 | 不发，交 Agent | 后端落盘 + AI 直接改源码 | 导出 diff + 直连后端，AI 可在你仓库里落地 |
 | 后端耦合 | 无 | 强（仅我们） | 弱（适配器模式，挂到任何后端） |
 
@@ -90,7 +90,7 @@ visual-edit-kit/
     serverUrl: '/api/visual-edit',      // 可选：后端落盘地址
     token: '<optional-auth>',           // 可选
     pickMode: 'click',                  // click | hover
-    features: ['text', 'color', 'hide', 'move', 'token', 'delete'],
+    features: ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout'],
   });
 </script>
 ```
@@ -103,7 +103,7 @@ import { VisualEditKit } from 've-react';
 <VisualEditKit
   route={location.pathname}
   serverUrl="/api/visual-edit"
-  features={['text', 'color', 'hide', 'move', 'token', 'delete']}
+  features={['text', 'color', 'hide', 'move', 'token', 'delete', 'layout']}
 />
 ```
 
@@ -151,3 +151,19 @@ MIT。可 fork、可商用、可嵌入闭源产品。
 
 后续可加：图层树拖拽排序（Figma 式 DOM 树）、测量/手柄、评论便签、方案版本/分支、
 审核流、结构级 DOM 增（当前支持删，增待补）。
+
+## 7. 布局 / 尺寸（layout 特性）
+
+开启 `features` 含 `'layout'` 后，选中元素会浮出一层绿色描边浮层：
+
+- **拖绿框移动**：在元素上按住拖动，整体平移（写入 `transform: translate(...)`）。
+- **拖右下角缩放**：改变 `width` / `height`。
+- **布局面板**（面板内「📐 布局 / 尺寸」折叠区）：直接填 宽/高/外边距/内边距、
+  选 显示(display)/排列(flex-direction)/主轴对齐/交叉轴/间距(gap)/定位(position)/浮动(float)。
+
+所有布局改动都走与样式相同的托管样式表（带 `!important`，**确保压过原页面的 id/class 规则**），
+刷新 / SPA 重渲染后由 core 自动重放，不会丢失；也进入「变更审计」可逐条撤销，并随方案导出 CSS / 保存到后端。
+
+> 说明：拖拽移动本质是视觉平移（`transform`），并不改变元素在 DOM 流里的兄弟顺序；
+> 若要调整"在同一容器里的先后位置"，用面板里的「↑ 上移 / ↓ 下移」（sibling reorder）。
+
