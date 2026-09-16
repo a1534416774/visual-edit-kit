@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>VisualEditKit Test Harness</title>
+  <style>
+    body { font-family: sans-serif; padding: 40px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
+    .toolbar { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+  <h1>测试页</h1>
+  <div class="card" id="card1">
+    <h3>卡片标题</h3>
+    <p>这是一段示例文字，用来测试文字修改与选区。</p>
+    <div class="toolbar">
+      <button id="btn1">按钮一</button>
+      <button id="btn2">按钮二</button>
+      <a href="#" id="link1">链接</a>
+    </div>
+  </div>
+  <div class="card" id="card2">
+    <h3>第二个卡片</h3>
+    <p>更多内容。</p>
+  </div>
+  <script src="ve-core.js"></script>
+  <script>
+    window.VisualEditKit.init({
+      route: "/test-harness",
+      features: ["text","color","hide","move","token","delete","layout","style","tree","comment","add","duplicate","variants"],
+      autoFetch: false
+    });
+  </script>
+</body>
+</html>

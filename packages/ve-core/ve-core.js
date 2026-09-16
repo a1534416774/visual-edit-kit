@@ -34,7 +34,7 @@
     route: (typeof location !== "undefined" ? location.pathname : "/"),
     serverUrl: null,
     token: null,
-    features: ["text", "color", "hide", "move", "token", "delete", "layout", "style", "tree", "comment"],
+    features: ["text", "color", "hide", "move", "token", "delete", "layout", "style", "tree", "comment", "add", "duplicate", "variants"],
     pickMode: "click",
     autoFetch: true,
   };
@@ -50,6 +50,7 @@
   var engineOn = false;
   var undoStack = [];
   var redoStack = [];
+  var rendering = false;
 
   // ---- 工具 --------------------------------------------------------------
   function nextId() { return PREFIX + (++counter); }
@@ -137,6 +138,14 @@
     return s;
   }
   function renderAll() {
+    rendering = true;
+    var addIds = {};
+    plan.changes.forEach(function (c) { if (c.kind === "add") addIds[c.id] = true; });
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll("[" + DATA_ATTR + "]"), function (el) {
+        if (el.__veAdded && !addIds[getAssignedId(el)]) { if (el.parentNode) el.parentNode.removeChild(el); }
+      });
+    } catch (e) {}
     var sheet = getSheet(STYLE_ID);
     var tokenSheet = getSheet(TOKEN_STYLE_ID);
     sheet.textContent = "";
@@ -158,6 +167,21 @@
           var d = q(c.id), t = q(c.targetId);
           if (!t && c.targetPath) t = resolvePath(c.targetPath);
           if (d && t && d !== t && !d.contains(t)) t.parentNode.insertBefore(d, t);
+        } else if (c.kind === "add") {
+          if (q(c.id)) return;
+          var ref = q(c.refId);
+          if (!ref && c.path) ref = resolvePath(c.path);
+          if (!ref && c.targetPath) ref = resolvePath(c.targetPath);
+          if (!ref || !ref.parentNode) return;
+          var tmp = document.createElement("div");
+          tmp.innerHTML = c.value || "";
+          var newEl = tmp.firstElementChild;
+          if (!newEl) return;
+          newEl.setAttribute(DATA_ATTR, c.id);
+          newEl.__veAdded = true;
+          if (c.position === "inside") ref.appendChild(newEl);
+          else if (c.position === "after") ref.parentNode.insertBefore(newEl, ref.nextSibling);
+          else ref.parentNode.insertBefore(newEl, ref);
         } else if (c.kind === "delete") {
           var de = q(c.id);
           if (de && de.parentNode) de.parentNode.removeChild(de);
@@ -174,6 +198,7 @@
     if (activeEl && overlayEl && !overlayEl.parentNode) { try { document.body.appendChild(overlayEl); updateOverlay(activeEl); } catch (e) {} }
     if (treeEl && treeEl.style.display !== "none" && engineOn) buildTreeBody();
     positionComments();
+    rendering = false;
   }
   function resolvePath(path) {
     if (!path) return null;
@@ -240,6 +265,7 @@
       else if (c.kind === "move") lines.push("/* move -> " + c.path + " { to-index: " + c.value + " } */");
       else if (c.kind === "moveTo") lines.push("/* move -> " + c.path + " { before: " + (c.targetPath || c.targetId) + " } */");
       else if (c.kind === "delete") lines.push("/* delete -> " + c.path + " */");
+      else if (c.kind === "add") lines.push("/* add -> " + c.position + " " + (c.path || c.refId || "") + " : " + String(c.value).replace(/\s+/g, " ").slice(0, 50) + " */");
       else if (c.kind === "comment") lines.push("/* comment on " + c.path + ": " + String(c.value).replace(/\*\//g, "* /") + " */");
     });
     return lines.join("\n") + "\n";
@@ -258,6 +284,7 @@
       else if (c.kind === "move") L.push("- 元素 `" + c.path + "`：在同一父容器内移到第 " + (c.value + 1) + " 位");
       else if (c.kind === "moveTo") L.push("- 元素 `" + c.path + "`：移动到 `" + (c.targetPath || c.targetId) + "` 之前");
       else if (c.kind === "comment") L.push("- 元素 `" + c.path + "`：备注 `" + c.value + "`");
+      else if (c.kind === "add") L.push("- 在 `" + (c.path || c.refId || "") + "` 的" + (c.position === "inside" ? "内部" : c.position === "after" ? "后面" : "前面") + "插入新元素：" + String(c.value).replace(/\s+/g, " ").slice(0, 60));
       else if (c.kind === "style") L.push("- 元素 `" + c.path + "`：" + c.prop + " → `" + c.value + "`");
     });
     if (!plan.changes.length) L.push("（暂无改动）");
@@ -393,6 +420,8 @@
       if (drag.mode === "move") {
         var dx = e.clientX - drag.sx + drag.bx;
         var dy = e.clientY - drag.sy + drag.by;
+        var s = snapMove(drag.el, dx, dy);
+        dx = s.dx; dy = s.dy;
         drag.el.style.setProperty("transform", "translate(" + dx + "px," + dy + "px)", "important");
       } else {
         var t = parseTranslate(drag.el);
@@ -402,7 +431,7 @@
         if (drag.dir.indexOf("s") >= 0) h = drag.sh + ddy;
         if (drag.dir.indexOf("w") >= 0) { w = drag.sw - ddx; tx = t.x + ddx; }
         if (drag.dir.indexOf("n") >= 0) { h = drag.sh - ddy; ty = t.y + ddy; }
-        w = Math.max(20, Math.round(w)); h = Math.max(20, Math.round(h));
+        w = Math.max(20, Math.round(w / 8) * 8); h = Math.max(20, Math.round(h / 8) * 8);
         drag.el.style.setProperty("width", w + "px", "important");
         drag.el.style.setProperty("height", h + "px", "important");
         drag.el.style.setProperty("transform", "translate(" + Math.round(tx) + "px," + Math.round(ty) + "px)", "important");
@@ -423,6 +452,7 @@
         upsert({ id: id, path: pathOf(el), kind: "style", prop: "height", value: Math.round(r.height) + "px" });
       }
       el.style.removeProperty("width"); el.style.removeProperty("height"); el.style.removeProperty("transform");
+      clearSnapGuides();
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       drag = null;
@@ -532,6 +562,26 @@
           (opts.features.indexOf("hide") >= 0 ? '<button data-ve-hide style="flex:1;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">隐藏</button>' : '') +
           (opts.features.indexOf("delete") >= 0 ? '<button data-ve-del style="flex:1;border:1px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#b91c1c;cursor:pointer">删除</button>' : '') +
         '</div>' : '') +
+      (opts.features.indexOf("add") >= 0 ?
+        '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">➕ 插入元素（先选中参照）</summary>' +
+          '<div style="margin-top:6px">' +
+            '<div style="display:flex;gap:6px;align-items:center;margin:4px 0">' +
+              '<span style="width:48px;font-size:11px;color:#6b7280">类型</span>' +
+              '<select data-ve-add-type style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif">' +
+                '<option value="div">容器</option><option value="text">文本</option><option value="button">按钮</option><option value="heading">标题</option><option value="image">图片</option><option value="hr">分隔线</option>' +
+              '</select>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:center;margin:4px 0">' +
+              '<span style="width:48px;font-size:11px;color:#6b7280">位置</span>' +
+              '<select data-ve-add-pos style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif">' +
+                '<option value="before">选中前</option><option value="after">选中后</option><option value="inside">选中内</option>' +
+              '</select>' +
+            '</div>' +
+            '<button data-ve-add style="margin-top:4px;width:100%;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;color:#15803d;cursor:pointer">➕ 插入</button>' +
+          '</div>' +
+        '</details>' : '') +
+      (opts.features.indexOf("duplicate") >= 0 ?
+        '<div style="margin-top:8px"><button data-ve-dup style="width:100%;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">⧉ 复制元素 (Ctrl+D)</button></div>' : '') +
       (opts.features.indexOf("comment") >= 0 ?
         '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">💬 评论 / 备注（钉在元素上）</summary>' +
           '<div style="margin-top:6px">' +
@@ -542,6 +592,17 @@
       (opts.features.indexOf("token") >= 0 ?
         '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">🎨 设计令牌(:root)</summary>' +
           '<div data-ve-tokens style="margin-top:6px;max-height:160px;overflow:auto"></div>' +
+        '</details>' : '') +
+      (opts.features.indexOf("variants") >= 0 ?
+        '<details style="margin-top:8px"><summary style="cursor:pointer;color:#6b7280;font-size:11px">🗂 方案版本（本地多套可切换）</summary>' +
+          '<div style="margin-top:6px">' +
+            '<select data-ve-variant style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:3px;font:12px sans-serif"></select>' +
+            '<div style="display:flex;gap:6px;margin-top:4px">' +
+              '<button data-ve-var-save style="flex:1;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;color:#15803d;cursor:pointer">覆盖保存</button>' +
+              '<button data-ve-var-new style="flex:1;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">另存为</button>' +
+              '<button data-ve-var-del style="flex:1;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">删除</button>' +
+            '</div>' +
+          '</div>' +
         '</details>' : '') +
       '<div data-ve-changes style="margin-top:8px;border-top:1px solid #f3f4f6;padding-top:6px;max-height:140px;overflow:auto"></div>' +
       '<div style="display:flex;gap:6px;margin-top:8px">' +
@@ -612,6 +673,15 @@
         deselect();
       });
     }
+    if (opts.features.indexOf("add") >= 0) {
+      p.querySelector("[data-ve-add]").addEventListener("click", function () {
+        if (!activeEl) { alert("先在页面上点选一个元素，作为插入位置的参照。"); return; }
+        addElement(p.querySelector("[data-ve-add-type]").value, p.querySelector("[data-ve-add-pos]").value);
+      });
+    }
+    if (opts.features.indexOf("duplicate") >= 0) {
+      p.querySelector("[data-ve-dup]").addEventListener("click", duplicateActive);
+    }
     if (layoutOn) bindInputs(p, [
       ["data-ve-width", "width"], ["data-ve-height", "height"], ["data-ve-margin", "margin"],
       ["data-ve-padding", "padding"], ["data-ve-display", "display"], ["data-ve-flexdir", "flex-direction"],
@@ -638,6 +708,29 @@
       var det = p.querySelector("details");
       if (det) det.addEventListener("toggle", function () { if (det.open) renderTokens(); });
     }
+    if (opts.features.indexOf("variants") >= 0) {
+      renderVariantSelect();
+      p.querySelector("[data-ve-var-save]").addEventListener("click", function () {
+        var sel = p.querySelector("[data-ve-variant]");
+        var name = sel ? sel.value : "";
+        if (!name) { name = window.prompt("方案名称：", "方案" + (listVariants().length + 1)); if (!name) return; }
+        saveVariant(name);
+      });
+      p.querySelector("[data-ve-var-new]").addEventListener("click", function () {
+        var name = window.prompt("另存为方案，名称：", "方案" + (listVariants().length + 1));
+        if (!name) return; saveVariant(name);
+      });
+      p.querySelector("[data-ve-var-del]").addEventListener("click", function () {
+        var sel = p.querySelector("[data-ve-variant]");
+        var name = sel ? sel.value : "";
+        if (!name) { alert("请先在上方选择一个方案再删除。"); return; }
+        if (window.confirm("确定删除方案「" + name + "」？")) deleteVariant(name);
+      });
+      p.querySelector("[data-ve-variant]").addEventListener("change", function (e) {
+        var name = e.target.value;
+        if (name) loadVariant(name);
+      });
+    }
     p.querySelector("[data-ve-export-css]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".css", exportCSS(), "text/css"); });
     p.querySelector("[data-ve-export-json]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".json", JSON.stringify(exportJSON(), null, 2), "application/json"); });
     p.querySelector("[data-ve-ai]").addEventListener("click", function () {
@@ -659,6 +752,7 @@
 
     panelEl = p;
     document.body.appendChild(p);
+    if (opts.features.indexOf("variants") >= 0) renderVariantSelect();
   }
 
   function moveActive(dir) {
@@ -680,6 +774,132 @@
     var el = activeEl; var id = ensureId(el);
     var t = parseTranslate(el);
     upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t.x + dx) + "px," + Math.round(t.y + dy) + "px)" });
+  }
+
+  // ---- 新增元素 / 复制 / 对齐吸附 / 方案版本 ----------------------------
+  var SNAP = 6;
+  var snapLayer = null;
+  function ensureSnapLayer() {
+    if (snapLayer) return;
+    snapLayer = document.createElement("div");
+    snapLayer.setAttribute("data-ve-ui", "1");
+    snapLayer.style.cssText = "position:fixed;inset:0;z-index:2147483595;pointer-events:none;";
+    document.body.appendChild(snapLayer);
+  }
+  function clearSnapGuides() { if (snapLayer) snapLayer.innerHTML = ""; }
+  function drawSnapGuide(axis, pos) {
+    if (!snapLayer) return;
+    var d = document.createElement("div");
+    if (axis === "v") d.style.cssText = "position:absolute;top:0;bottom:0;left:" + pos + "px;width:1px;background:#ec4899";
+    else d.style.cssText = "position:absolute;left:0;right:0;top:" + pos + "px;height:1px;background:#ec4899";
+    snapLayer.appendChild(d);
+  }
+  function candidates(except) {
+    var out = [];
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll(PICKABLE), function (n) {
+        if (n === except || !document.body.contains(n) || isUi(n)) return;
+        var r = n.getBoundingClientRect();
+        if (r.width && r.height) out.push({ el: n, r: r });
+      });
+    } catch (e) {}
+    return out;
+  }
+  function snapMove(el, dx, dy) {
+    try {
+      ensureSnapLayer(); clearSnapGuides();
+      var r = el.getBoundingClientRect();
+      var left = r.left + dx, top = r.top + dy, right = left + r.width, bottom = top + r.height;
+      var cx = left + r.width / 2, cy = top + r.height / 2;
+      var cands = candidates(el);
+      var bestX = null, bestY = null;
+      cands.forEach(function (o) {
+        var or = o.r, ol = or.left, oR = or.right, ot = or.top, ob = or.bottom, ocx = (ol + oR) / 2, ocy = (ot + ob) / 2;
+        [[ol, left], [ol, right], [ol, cx], [oR, left], [oR, right], [oR, cx], [ocx, left], [ocx, cx], [ocx, right]].forEach(function (p) {
+          var d = p[0] - p[1];
+          if (Math.abs(d) <= SNAP && (bestX === null || Math.abs(d) < Math.abs(bestX[0]))) bestX = [d, p[0]];
+        });
+        [[ot, top], [ot, bottom], [ot, cy], [ob, top], [ob, bottom], [ob, cy], [ocy, top], [ocy, cy], [ocy, bottom]].forEach(function (p) {
+          var d = p[0] - p[1];
+          if (Math.abs(d) <= SNAP && (bestY === null || Math.abs(d) < Math.abs(bestY[0]))) bestY = [d, p[0]];
+        });
+      });
+      if (bestX) { dx += bestX[0]; drawSnapGuide("v", bestX[1]); }
+      if (bestY) { dy += bestY[0]; drawSnapGuide("h", bestY[1]); }
+    } catch (e) {}
+    dx = Math.round(dx / 8) * 8; dy = Math.round(dy / 8) * 8;
+    return { dx: dx, dy: dy };
+  }
+  function addElement(type, position) {
+    if (!activeEl) return;
+    var html;
+    switch (type) {
+      case "div": html = '<div style="padding:12px;border:1px dashed #cbd5e1;color:#475569">新容器</div>'; break;
+      case "text": html = '<p style="margin:0">新文本段落</p>'; break;
+      case "button": html = '<button style="padding:6px 14px;border:1px solid #6366f1;background:#eef2ff;color:#4338ca;border-radius:6px;cursor:pointer">新按钮</button>'; break;
+      case "heading": html = '<h3 style="margin:0">新标题</h3>'; break;
+      case "image": html = '<img src="data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'160\' height=\'90\'><rect width=\'160\' height=\'90\' fill=\'#e5e7eb\'/><text x=\'50%\' y=\'50%\' text-anchor=\'middle\' dy=\'.3em\' fill=\'#9ca3af\' font-family=\'sans-serif\'>图片</text></svg>" style="max-width:100%;border:1px solid #e5e7eb;border-radius:6px" alt="图片">'; break;
+      case "hr": html = '<hr style="border:none;border-top:1px solid #e5e7eb">'; break;
+      default: html = '<div>新元素</div>';
+    }
+    var refId = getAssignedId(activeEl);
+    var id = nextId();
+    pushHistory();
+    upsert({ id: id, path: pathOf(activeEl), kind: "add", prop: "insert", value: html, position: position, refId: refId });
+    var newEl = q(id);
+    if (newEl) select(newEl);
+  }
+  function duplicateActive() {
+    if (!activeEl) return;
+    var html = (activeEl.outerHTML || "")
+      .replace(/\s+data-ve-id="[^"]*"/g, "")
+      .replace(/\s+__veAdded="?true"?/g, "")
+      .replace(/outline:\s*[^;]+;?/g, "");
+    var refId = getAssignedId(activeEl);
+    var id = nextId();
+    pushHistory();
+    upsert({ id: id, path: pathOf(activeEl), kind: "add", prop: "insert", value: html, position: "after", refId: refId });
+    var newEl = q(id);
+    if (newEl) select(newEl);
+  }
+  function variantKey(name) { return "ve_var::" + (opts.route || "root") + "::" + name; }
+  function listVariants() {
+    var out = [];
+    try {
+      var prefix = "ve_var::" + (opts.route || "root") + "::";
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(prefix) === 0) out.push(k.slice(prefix.length));
+      }
+    } catch (e) {}
+    return out;
+  }
+  function renderVariantSelect() {
+    if (!panelEl) return;
+    var sel = panelEl.querySelector("[data-ve-variant]");
+    if (!sel) return;
+    var names = listVariants();
+    sel.innerHTML = '<option value="">（当前未命名方案）</option>' +
+      names.map(function (n) { return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + "</option>"; }).join("");
+  }
+  function saveVariant(name) {
+    if (!name) return;
+    try { localStorage.setItem(variantKey(name), JSON.stringify(plan)); } catch (e) {}
+    renderVariantSelect();
+    var sel = panelEl && panelEl.querySelector("[data-ve-variant]");
+    if (sel) sel.value = name;
+  }
+  function loadVariant(name) {
+    if (!name) return;
+    try {
+      var raw = localStorage.getItem(variantKey(name));
+      if (raw) { plan = JSON.parse(raw); plan.route = opts.route; persist(); renderAll(); if (panelEl) syncPanelTo(activeEl); }
+    } catch (e) {}
+    if (panelEl) { var sel = panelEl.querySelector("[data-ve-variant]"); if (sel) sel.value = name; }
+  }
+  function deleteVariant(name) {
+    try { localStorage.removeItem(variantKey(name)); } catch (e) {}
+    renderVariantSelect();
   }
 
   function syncPanelTo(el) {
@@ -730,10 +950,11 @@
     if (!plan.changes.length) { box.innerHTML = '<div style="color:#9ca3af;font-size:11px">暂无变更</div>'; return; }
     box.innerHTML = plan.changes.map(function (c, i) {
       var label = c.kind === "text" ? "文字" : c.kind === "hide" ? "隐藏" : c.kind === "delete" ? "删除" :
-        c.kind === "move" ? "排序" : c.kind === "moveTo" ? "移动" : c.kind === "comment" ? "评论" :
+        c.kind === "move" ? "排序" : c.kind === "moveTo" ? "移动" : c.kind === "add" ? "新增" : c.kind === "comment" ? "评论" :
         c.kind === "token" ? c.prop : c.prop;
       var val = c.kind === "move" ? "→第" + (c.value + 1) + "位" : c.kind === "hide" || c.kind === "delete" ? "" :
         c.kind === "moveTo" ? "前:" + (c.targetPath || c.targetId || "").slice(0, 20) :
+        c.kind === "add" ? "新元素" :
         c.kind === "comment" ? ("" + c.value).slice(0, 20) : ("" + c.value).slice(0, 24);
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px dashed #f3f4f6">' +
         '<span style="font-size:11px;color:#374151">' + escapeHtml(label) + ' <span style="color:#9ca3af">' + escapeHtml(val) + '</span></span>' +
@@ -926,6 +1147,7 @@
   function observe() {
     if (mo) mo.disconnect();
     mo = new MutationObserver(function (records) {
+      if (rendering) return;
       for (var i = 0; i < records.length; i++) {
         var rec = records[i];
         if (isOurNode(rec.target)) continue;
@@ -975,6 +1197,7 @@
       if (inField) return;
       if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) { e.preventDefault(); redo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) { e.preventDefault(); if (activeEl) duplicateActive(); return; }
       if (!activeEl) return;
       if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteActive(); return; }
       var step = e.shiftKey ? 10 : 1;
@@ -1038,6 +1261,12 @@
     render: renderAll,
     undo: undo,
     redo: redo,
+    addElement: function (type, position) { addElement(type, position); },
+    duplicate: duplicateActive,
+    listVariants: listVariants,
+    saveVariant: saveVariant,
+    loadVariant: loadVariant,
+    deleteVariant: deleteVariant,
   };
   return api;
 });

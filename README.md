@@ -26,7 +26,7 @@ VisualEditKit 走的是**内嵌式**（我们之前在 SaaS 里做的那种，�
 | 作用域 | 任意站点 | 仅我们自己的应用 | 任何引入了它的应用 |
 | 元素定位 | `data-dm-id` + 托管 `<style>` | 路由级 `localStorage` | `data-ve-id` + 托管 `<style>`（借鉴 DM 的稳健做法） |
 | 持久化 | 单浏览器 `chrome.storage` | 前端 `localStorage` + 我们后端文件 | 前端 `localStorage` **+ 可插拔后端**（文件/PG/你现有库） |
-| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计/**拖拽移动 + 8 向缩放 + 布局尺寸面板**/**扩展样式(边框圆角透明层级字体对齐行高)**/**图层树(点选+拖拽换位/跨容器搬移)**/**评论便签**/**撤销重做+快捷键**/**一键复制 AI 指令** |
+| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计/**拖拽移动 + 8 向缩放 + 布局尺寸面板**/**扩展样式(边框圆角透明层级字体对齐行高)**/**图层树(点选+拖拽换位/跨容器搬移)**/**评论便签**/**撤销重做+快捷键**/**一键复制 AI 指令**/**新增元素(容器/文本/按钮/标题/图片/分隔线,可插前/后/内)**/**复制元素(Ctrl+D)**/**对齐吸附(网格+边缘参考线)**/**方案版本(本地多套可切换保存)** |
 | 改源码 | 不发，交 Agent | 后端落盘 + AI 直接改源码 | 导出 diff + 直连后端，AI 可在你仓库里落地 |
 | 后端耦合 | 无 | 强（仅我们） | 弱（适配器模式，挂到任何后端） |
 
@@ -90,7 +90,7 @@ visual-edit-kit/
     serverUrl: '/api/visual-edit',      // 可选：后端落盘地址
     token: '<optional-auth>',           // 可选
     pickMode: 'click',                  // click | hover
-    features: ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment'],
+    features: ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment', 'add', 'duplicate', 'variants'],
   });
 </script>
 ```
@@ -103,7 +103,7 @@ import { VisualEditKit } from 've-react';
 <VisualEditKit
   route={location.pathname}
   serverUrl="/api/visual-edit"
-  features={['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment']}
+  features={['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment', 'add', 'duplicate', 'variants']}
 />
 ```
 
@@ -149,8 +149,8 @@ Postgres 实现通过 `psycopg` 连接池，`visual_edit_plans(route TEXT PK, pl
 
 MIT。可 fork、可商用、可嵌入闭源产品。
 
-后续可加：方案版本/分支、审核流、结构级 DOM **增**（当前支持删 + 拖拽**搬移**，
-增待补）、测量/标注、截图导出。
+已实现：结构级 DOM **增**（新增元素 + 复制元素）、对齐吸附、方案版本（本地多套可切换）。
+后续可加：后端托管的方案版本/分支与团队审核流、测量/标注、截图导出（html2canvas）。
 
 ## 7. 布局 / 尺寸（layout 特性）
 
@@ -189,5 +189,26 @@ MIT。可 fork、可商用、可嵌入闭源产品。
   再附等价 CSS——复制到剪贴板，粘贴给任意编码 Agent 即可落地。
 
 > 所有改动都实时进入右下角「变更审计」列表，可逐条 `↺` 撤销；也可「导 CSS / 导 JSON」「保存后端」「重置本页」。
+
+## 9. 结构编辑 / 复制 / 对齐吸附 / 方案版本（add · duplicate · variants）
+
+这些特性默认均已开启（见上方 `features` 默认值）。
+
+- **新增元素 `add`**：面板「➕ 插入元素」折叠区，先选中一个元素作为参照，再选
+  - 类型：容器 / 文本 / 按钮 / 标题 / 图片 / 分隔线
+  - 位置：选中元素**前** / **后** / **内**
+  点「➕ 插入」即在参照处生成新元素，并自动选中、可继续微调。新增元素与删除一样走 `data-ve-id` +
+  托管样式表，**刷新 / SPA 重渲染后由 core 自动重放**，不会丢失；撤销会把它从 DOM 移除。
+- **复制元素 `duplicate`**：面板「⧉ 复制元素」按钮，或快捷键 `Ctrl/Cmd+D`，
+  在选中元素之后克隆一份（剥离其 `data-ve-id` 等内部标记），新副本同样可继续编辑。
+- **对齐吸附 `snap`**：拖拽移动 / 缩放时
+  - 自动对齐到其它元素的上/下/左/右/中线（误差 ≤6px 吸附，并画出粉色参考线）；
+  - 同时吸附到 8px 网格，保证尺寸整齐。
+- **方案版本 `variants`**：面板「🗂 方案版本」折叠区，把当前方案存成多套本地版本：
+  - 「覆盖保存」：存入选中的方案名（未选则让你命名）；
+  - 「另存为」：存成新方案；
+  - 下拉切换任意已存方案（相当于本地分支 / 快照）；
+  - 「删除」：移除某套方案。
+  版本存于 `localStorage`，刷新不丢，适合同一页面做 A/B 版式对比后择一保存后端。
 
 

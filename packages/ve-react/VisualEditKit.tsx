@@ -7,7 +7,7 @@ export interface VisualEditKitProps {
   serverUrl?: string;
   token?: string;
   pickMode?: 'click' | 'hover';
-  features?: Array<'text' | 'color' | 'hide' | 'move' | 'token' | 'delete' | 'layout' | 'style' | 'tree' | 'comment'>;
+  features?: Array<'text' | 'color' | 'hide' | 'move' | 'token' | 'delete' | 'layout' | 'style' | 'tree' | 'comment' | 'add' | 'duplicate' | 'variants'>;
   /** ve-core.js 的加载路径（放到 public/vendor 下） */
   coreSrc?: string;
   /** 启动后是否自动从后端拉取团队方案 */
@@ -32,7 +32,7 @@ export function VisualEditKit({
   serverUrl,
   token,
   pickMode = 'click',
-  features = ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment'],
+  features = ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment', 'add', 'duplicate', 'variants'],
   coreSrc = '/vendor/ve-core.js',
   autoFetch = true,
 }: VisualEditKitProps) {
