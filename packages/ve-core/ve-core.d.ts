@@ -1,8 +1,8 @@
 // Type declarations for visual-edit-kit ve-core (UMD / CommonJS).
 // Usage: `import { VisualEditKit } from 'visual-edit-kit/ve-core'` or via <script> (window.VisualEditKit)
 
-export type ChangeKind = 'style' | 'text' | 'hide' | 'move' | 'delete' | 'token';
-export type Feature = 'text' | 'color' | 'hide' | 'move' | 'token' | 'delete';
+export type ChangeKind = 'style' | 'text' | 'hide' | 'move' | 'moveTo' | 'delete' | 'token' | 'comment';
+export type Feature = 'text' | 'color' | 'hide' | 'move' | 'token' | 'delete' | 'layout' | 'style' | 'tree' | 'comment';
 export type PickMode = 'click' | 'hover';
 
 export interface Change {
@@ -32,9 +32,12 @@ export interface VisualEditKitAPI {
   getPlan(): Plan;
   exportCSS(): string;
   exportJSON(): string;
+  exportAI(): string;
   save(): Promise<boolean>;
   reset(): void;
   render(): void;
+  undo(): void;
+  redo(): void;
 }
 
 declare const VisualEditKit: VisualEditKitAPI;
