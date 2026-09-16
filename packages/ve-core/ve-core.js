@@ -82,6 +82,19 @@
     if (!id) { id = nextId(); el.setAttribute(DATA_ATTR, id); }
     return id;
   }
+  // 关键：按文档顺序给所有可拾取元素确定性地分配 data-ve-id。
+  // 同页面同 DOM 顺序下，每次刷新后分配出的 id 完全一致，
+  // 这样 loadLocal/loadRemote 读回的方案才能靠 [data-ve-id=...] 正确重放（否则刷新即丢）。
+  // 仅给尚无 id 的元素补号，已分配者保持不变，避免会话内/重渲染时 id 漂移。
+  function assignAllIds() {
+    try {
+      var nodes = document.querySelectorAll(PICKABLE);
+      Array.prototype.forEach.call(nodes, function (el) {
+        if (isUi(el)) return;
+        if (!getAssignedId(el)) el.setAttribute(DATA_ATTR, nextId());
+      });
+    } catch (e) {}
+  }
   function pushHistory() {
     try { undoStack.push(JSON.stringify(plan)); if (undoStack.length > 100) undoStack.shift(); } catch (e) {}
     redoStack.length = 0;
@@ -155,6 +168,7 @@
   }
   function renderAll() {
     rendering = true;
+    assignAllIds();            // 先补齐确定性 id，确保方案按 id 重放能命中元素
     var addIds = {};
     plan.changes.forEach(function (c) { if (c.kind === "add") addIds[c.id] = true; });
     try {
@@ -1376,6 +1390,7 @@
       if (rawPos) { var pv = JSON.parse(rawPos); if (pv && typeof pv.x === "number" && typeof pv.y === "number") panelUserPos = pv; }
     } catch (e) {}
     loadLocal();
+    assignAllIds();            // 首次加载时先给当前 DOM 补齐确定性 id，再重放方案
     if (opts.autoFetch) loadRemote().then(renderAll); else renderAll();
     observe();
     mountToggle();
