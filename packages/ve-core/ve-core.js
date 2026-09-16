@@ -166,6 +166,25 @@
     if (!s) { s = document.createElement("style"); s.id = id; document.head.appendChild(s); }
     return s;
   }
+  // ---- 变更目标解析（防"套错元素"）---------------------------------------
+  // 方案里的 data-ve-id 是"会话内按需分配"的，跨刷新/跨构建会漂移；path 才是编辑当时
+  // 记录的稳定 CSS 路径。所以：**以 path 为准解析元素，id 只做兜底**，再加一道 tag 指纹
+  // 校验——解析出的元素结构明显不符时，宁可不应用，也不要把样式/隐藏错套到别的元素上。
+  // （历史事故：header 的宽高变更被套到了导航项上，直接把顶部菜单栏搞没了。）
+  function fpOf(el) { return el && el.tagName ? el.tagName.toLowerCase() : ""; }
+  function targetFor(c) {
+    var el = c.path ? resolvePath(c.path) : null;
+    if (el && (isUi(el) || (c.fp && fpOf(el) !== c.fp))) el = null;
+    if (el) return el;
+    var byId = c.id ? q(c.id) : null;
+    if (byId && (isUi(byId) || (c.fp && fpOf(byId) !== c.fp))) byId = null;
+    return byId;
+  }
+  // 规则锚点：CSS 规则一律写在"实际解析到的元素"的 id 上，而不是方案里记录的旧 id
+  function anchorSel(c) {
+    var el = targetFor(c);
+    return el ? "[" + DATA_ATTR + '="' + ensureId(el) + '"]' : null;
+  }
   function renderAll() {
     rendering = true;
     assignAllIds();            // 先补齐确定性 id，确保方案按 id 重放能命中元素
@@ -184,17 +203,19 @@
     plan.changes.forEach(function (c) {
       try {
         if (c.kind === "style") {
-          sheet.textContent += "[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + " !important; }\n";
+          var ss = anchorSel(c);
+          if (ss) sheet.textContent += ss + " { " + c.prop + ": " + c.value + " !important; }\n";
         } else if (c.kind === "hide") {
-          sheet.textContent += "[" + DATA_ATTR + '="' + c.id + '"] { display: none !important; }\n';
+          var hs = anchorSel(c);
+          if (hs) sheet.textContent += hs + " { display: none !important; }\n";
         } else if (c.kind === "text") {
-          var te = q(c.id);
+          var te = targetFor(c);
           if (te) setTextOnly(te, c.value);
         } else if (c.kind === "move") {
-          var me = q(c.id);
+          var me = targetFor(c);
           if (me) moveToIndex(me, c.value);
         } else if (c.kind === "moveTo") {
-          var d = q(c.id), t = q(c.targetId);
+          var d = targetFor(c), t = q(c.targetId);
           if (!t && c.targetPath) t = resolvePath(c.targetPath);
           if (d && t && d !== t && !d.contains(t)) t.parentNode.insertBefore(d, t);
         } else if (c.kind === "add") {
@@ -213,7 +234,7 @@
           else if (c.position === "after") ref.parentNode.insertBefore(newEl, ref.nextSibling);
           else ref.parentNode.insertBefore(newEl, ref);
         } else if (c.kind === "delete") {
-          var de = q(c.id);
+          var de = targetFor(c);
           if (de && de.parentNode) de.parentNode.removeChild(de);
         } else if (c.kind === "comment") {
           /* 评论仅做标记，渲染在 commentLayer */
@@ -239,6 +260,12 @@
   // ---- 变更模型 ----------------------------------------------------------
   // change = { id, path, prop, value, kind }
   function upsert(change) {
+    // 记录目标元素 tag 指纹：跨刷新重放时用它校验"path/id 解析出的还是同一类元素"，
+    // 避免旧方案里的漂移 id 把某个元素的样式/隐藏套到别的元素上。
+    if (change && !change.fp && change.kind !== "token") {
+      var pe = (change.id && change.id.charAt(0) === ":") ? null : (q(change.id) || resolvePath(change.path));
+      if (pe && pe.tagName) change.fp = pe.tagName.toLowerCase();
+    }
     var i = plan.changes.findIndex(function (c) { return c.id === change.id && c.kind === change.kind && c.prop === change.prop; });
     if (i >= 0) {
       if (change.value === undefined || change.value === "" || (change.kind === "style" && change.value === "")) { plan.changes.splice(i, 1); }
@@ -290,8 +317,9 @@
     tokens.forEach(function (c) { lines.push("  " + c.prop + ": " + c.value + ";"); });
     lines.push("}");
     others.forEach(function (c) {
-      if (c.kind === "style") lines.push("[" + DATA_ATTR + '="' + c.id + '"] { ' + c.prop + ": " + c.value + " !important; }");
-      else if (c.kind === "hide") lines.push("[" + DATA_ATTR + '="' + c.id + '"] { display: none !important; }');
+      var ref = anchorSel(c) || "[" + DATA_ATTR + '="' + c.id + '"]';
+      if (c.kind === "style") lines.push(ref + " { " + c.prop + ": " + c.value + " !important; }");
+      else if (c.kind === "hide") lines.push(ref + " { display: none !important; }");
       else if (c.kind === "text") lines.push("/* text -> " + c.path + " { content: '" + String(c.value).replace(/'/g, "\\'") + "' } */");
       else if (c.kind === "move") lines.push("/* move -> " + c.path + " { to-index: " + c.value + " } */");
       else if (c.kind === "moveTo") lines.push("/* move -> " + c.path + " { before: " + (c.targetPath || c.targetId) + " } */");
@@ -665,8 +693,8 @@
       '<button data-ve-ai style="margin-top:6px;width:100%;border:1px solid #0ea5e9;border-radius:6px;background:#f0f9ff;color:#0369a1;cursor:pointer">📋 复制 AI 指令</button>' +
       (opts.serverUrl ? '<div style="display:flex;gap:6px;margin-top:6px">' +
         '<button data-ve-save style="flex:1;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;color:#15803d;cursor:pointer">保存后端</button>' +
-        '<button data-ve-reset style="flex:1;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">重置本页</button>' +
-      '</div>' : '<button data-ve-reset style="width:100%;margin-top:6px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer">重置本页</button>');
+        '<button data-ve-reset style="flex:1;border:1px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#b91c1c;cursor:pointer">🧹 清空本页</button>' +
+      '</div>' : '<button data-ve-reset style="width:100%;margin-top:6px;border:1px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#b91c1c;cursor:pointer">🧹 清空本页改动</button>');
 
     // 事件
     p.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -829,10 +857,15 @@
       });
     }
     p.querySelector("[data-ve-reset]").addEventListener("click", function () {
+      var ok = true;
+      try { ok = window.confirm("清空本页的全部微调改动，恢复页面原样？\n（本机记录" + (opts.serverUrl ? " 与后端方案" : "") + "都会一起清掉）"); } catch (e) { ok = true; }
+      if (!ok) return;
       pushHistory();
       plan = { route: opts.route, changes: [] };
       persist(); renderAll();
+      if (opts.serverUrl) saveToServer();      // 后端也一起清空，避免刷新后被重新拉回来
       if (panelEl) { syncPanelTo(activeEl); renderChangesList(); }
+      toast("已清空本页改动");
     });
 
     panelEl = p;
@@ -1301,6 +1334,17 @@
     toast("微调已开启：点击页面上的任意元素即可打开面板");
   }
 
+  // 在没有任何选中时打开面板（摆在右下角、开关上方）——保证「清空本页 / 撤销 / 本页改动列表」
+  // 这些救急入口永远够得着：即使把菜单栏等元素隐藏了、选不中也一样能恢复。
+  function openPanelAtDefault() {
+    buildPanel();
+    var pw = panelEl.offsetWidth || 300;
+    panelEl.style.left = Math.max(8, window.innerWidth - pw - 14) + "px";
+    panelEl.style.top = Math.max(8, window.innerHeight - (panelEl.offsetHeight || 320) - 62) + "px";
+    showPanel();
+    renderChangesList();
+  }
+
   function mountToggle() {
     var b = document.createElement("button");
     b.setAttribute("data-ve-ui", "1");
@@ -1312,8 +1356,10 @@
     b.addEventListener("click", function () {
       // 开着但面板不可见时，点按钮 = 把面板找回来（而不是把模式关掉，否则会像"功能入口彻底消失"）
       if (engineOn && !panelVisible()) {
-        if (lastActiveEl && document.body.contains(lastActiveEl)) select(lastActiveEl);
-        else { selectHint(); }
+        if (lastActiveEl && document.body.contains(lastActiveEl)) { select(lastActiveEl); return; }
+        // 没有任何可恢复的选中（比如上次选中的元素已被隐藏/删除）→ 直接开面板，
+        // 保证"清空本页""撤销"这些救急入口永远够得着。
+        openPanelAtDefault();
         return;
       }
       engineOn = !engineOn;
@@ -1325,6 +1371,7 @@
         if (commentLayer) commentLayer.style.display = "block";
         // 重新打开时恢复上次选中的元素与面板，避免"关掉就再也打不开"
         if (lastActiveEl && document.body.contains(lastActiveEl)) select(lastActiveEl);
+        else openPanelAtDefault();   // 首次开启也让面板直接出现，别让人找不着
       } else {
         document.removeEventListener("mouseover", onOver, true);
         document.removeEventListener("click", onPick, true);
@@ -1420,6 +1467,14 @@
     exportAI: exportAI,
     save: saveToServer,
     reset: function () { pushHistory(); plan = { route: opts.route, changes: [] }; persist(); renderAll(); },
+    /** 救急：清空本页所有改动（本机记录 + 可选后端），页面立刻恢复原样 */
+    clearPlan: function (alsoRemote) {
+      pushHistory();
+      plan = { route: opts.route, changes: [] };
+      persist(); renderAll();
+      if (alsoRemote !== false && opts.serverUrl) saveToServer();
+      return true;
+    },
     render: renderAll,
     undo: undo,
     redo: redo,

@@ -16,6 +16,8 @@ export interface Change {
   refId?: string;
   targetId?: string;
   targetPath?: string;
+  /** 目标元素 tag 指纹（如 'header'/'div'）。跨刷新重放时用于校验解析出的元素是否仍是同一个，避免套错元素。 */
+  fp?: string;
 }
 
 export interface Plan {
@@ -40,6 +42,8 @@ export interface VisualEditKitAPI {
   exportAI(): string;
   save(): Promise<boolean>;
   reset(): void;
+  /** 救急：清空本页全部改动（本机记录 + 默认同时清后端），页面立刻恢复原样 */
+  clearPlan(alsoRemote?: boolean): boolean;
   render(): void;
   undo(): void;
   redo(): void;
