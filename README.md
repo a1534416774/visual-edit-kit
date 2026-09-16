@@ -26,7 +26,7 @@ VisualEditKit 走的是**内嵌式**（我们之前在 SaaS 里做的那种，�
 | 作用域 | 任意站点 | 仅我们自己的应用 | 任何引入了它的应用 |
 | 元素定位 | `data-dm-id` + 托管 `<style>` | 路由级 `localStorage` | `data-ve-id` + 托管 `<style>`（借鉴 DM 的稳健做法） |
 | 持久化 | 单浏览器 `chrome.storage` | 前端 `localStorage` + 我们后端文件 | 前端 `localStorage` **+ 可插拔后端**（文件/PG/你现有库） |
-| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计/**拖拽移动+缩放+布局尺寸面板** |
+| 编辑能力 | 全套 CSS / 图层 / 令牌 / 评论 | 文字/配色/隐藏/排序 | 文字/配色/字号字重/隐藏/排序/**删除**/**设计令牌**/变更审计/**拖拽移动 + 8 向缩放 + 布局尺寸面板**/**扩展样式(边框圆角透明层级字体对齐行高)**/**图层树(点选+拖拽换位/跨容器搬移)**/**评论便签**/**撤销重做+快捷键**/**一键复制 AI 指令** |
 | 改源码 | 不发，交 Agent | 后端落盘 + AI 直接改源码 | 导出 diff + 直连后端，AI 可在你仓库里落地 |
 | 后端耦合 | 无 | 强（仅我们） | 弱（适配器模式，挂到任何后端） |
 
@@ -90,7 +90,7 @@ visual-edit-kit/
     serverUrl: '/api/visual-edit',      // 可选：后端落盘地址
     token: '<optional-auth>',           // 可选
     pickMode: 'click',                  // click | hover
-    features: ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout'],
+    features: ['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment'],
   });
 </script>
 ```
@@ -103,7 +103,7 @@ import { VisualEditKit } from 've-react';
 <VisualEditKit
   route={location.pathname}
   serverUrl="/api/visual-edit"
-  features={['text', 'color', 'hide', 'move', 'token', 'delete', 'layout']}
+  features={['text', 'color', 'hide', 'move', 'token', 'delete', 'layout', 'style', 'tree', 'comment']}
 />
 ```
 
@@ -149,15 +149,15 @@ Postgres 实现通过 `psycopg` 连接池，`visual_edit_plans(route TEXT PK, pl
 
 MIT。可 fork、可商用、可嵌入闭源产品。
 
-后续可加：图层树拖拽排序（Figma 式 DOM 树）、测量/手柄、评论便签、方案版本/分支、
-审核流、结构级 DOM 增（当前支持删，增待补）。
+后续可加：方案版本/分支、审核流、结构级 DOM **增**（当前支持删 + 拖拽**搬移**，
+增待补）、测量/标注、截图导出。
 
 ## 7. 布局 / 尺寸（layout 特性）
 
 开启 `features` 含 `'layout'` 后，选中元素会浮出一层绿色描边浮层：
 
 - **拖绿框移动**：在元素上按住拖动，整体平移（写入 `transform: translate(...)`）。
-- **拖右下角缩放**：改变 `width` / `height`。
+- **拖 8 个手柄缩放**：四角 + 四边共 8 个绿色手柄，分别改变 `width` / `height`（从顶部/左侧缩放时会同步平移 `transform`，保持对角不动）。
 - **布局面板**（面板内「📐 布局 / 尺寸」折叠区）：直接填 宽/高/外边距/内边距、
   选 显示(display)/排列(flex-direction)/主轴对齐/交叉轴/间距(gap)/定位(position)/浮动(float)。
 
@@ -166,4 +166,28 @@ MIT。可 fork、可商用、可嵌入闭源产品。
 
 > 说明：拖拽移动本质是视觉平移（`transform`），并不改变元素在 DOM 流里的兄弟顺序；
 > 若要调整"在同一容器里的先后位置"，用面板里的「↑ 上移 / ↓ 下移」（sibling reorder）。
+
+## 8. 新增能力（style / tree / comment / 撤销重做 / AI 指令）
+
+这些特性默认均已开启（见上方 `features` 默认值）。
+
+- **扩展样式 `style`**：面板「🎛 扩展样式」折叠区可改 圆角 / 透明度 / 边框(宽·色·样式) /
+  层级 z-index / 行高 / 文字对齐 / 字体。同样走 `!important` 托管样式表。
+- **图层树 `tree`**：点面板「🗂 图层」打开浮层树。
+  - 点任意节点 = 选中该元素（与在页面上点选等价）。
+  - **拖一个节点到另一个节点上 = 把它移动到目标节点之前**（可跨容器搬移，"把功能区换个位置"就靠它）。
+  - 树随 DOM 变化自动刷新（SPA 重渲染后依然准确）。
+- **评论 `comment`**：面板「💬 评论 / 备注」里写文字 → 点「📌 钉备注」，会在元素右上角钉一个 💬 标记；
+  评论随方案导出（CSS 里作为注释、AI 指令里作为一条备注），方便把"为什么这样改"一并交给 AI。
+- **撤销 / 重做**：面板「↶ 撤销 / ↷ 重做」按钮，或快捷键 `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z`（或 `Ctrl+Y`）。
+  快捷键：
+  - `Esc` 取消选中 / 关闭面板
+  - `Delete` / `Backspace` 删除选中元素（与面板"删除"等价）
+  - 方向键 `←↑↓→` 微调位置（按住 `Shift` 步长 10px）
+  - 注意：焦点在输入框/下拉时，方向键与删除键作用于文本，不会误触元素。
+- **一键复制 AI 指令**：面板「📋 复制 AI 指令」生成一段 Markdown——先列出每条改动（路径为可直接定位源码的 CSS 选择器），
+  再附等价 CSS——复制到剪贴板，粘贴给任意编码 Agent 即可落地。
+
+> 所有改动都实时进入右下角「变更审计」列表，可逐条 `↺` 撤销；也可「导 CSS / 导 JSON」「保存后端」「重置本页」。
+
 
