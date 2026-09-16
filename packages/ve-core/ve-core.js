@@ -368,6 +368,11 @@
   function download(name, content, type) {
     var blob = new Blob([content], { type: type || "text/plain" });
     var a = document.createElement("a");
+    // 关键：标记为引擎自身 UI。否则微调开启时 document 上的捕获态 onPick 会把这次
+    // 程序化点击当作"拾取元素"，调用 e.preventDefault() 取消 <a download> 的默认下载行为
+    // —— 现象就是"点了导出只弹窗、不下载"。
+    a.setAttribute("data-ve-ui", "1");
+    a.style.display = "none";
     a.href = URL.createObjectURL(blob);
     a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
