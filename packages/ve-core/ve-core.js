@@ -42,6 +42,9 @@
   var plan = { route: opts.route, changes: [] };
   var counter = 0;
   var activeEl = null;
+  var lastActiveEl = null;
+  var panelUserPos = null;   // 用户手动拖过面板后的位置（记住，不再自动跟随元素）
+  var POS_KEY = "ve_panel_pos";
   var panelEl = null;
   var overlayEl = null;
   var hoverEl = null;
@@ -58,6 +61,19 @@
   function isOurNode(n) { return !!(n && n.closest && n.closest("[data-ve-ui]")); }
   function isPickable(el) {
     return el && el.nodeType === 1 && el.closest && el.closest(PICKABLE) && !isUi(el);
+  }
+  // 穿透点选：忽略自家 UI（绿框/面板/吸附线/评论标记），返回命中点下最内层的可拾取元素
+  function hitTest(x, y) {
+    var stack = [];
+    try { stack = document.elementsFromPoint(x, y) || []; } catch (e) { stack = []; }
+    for (var i = 0; i < stack.length; i++) {
+      var n = stack[i];
+      if (!n || n.nodeType !== 1 || isUi(n)) continue;
+      var pick = n.closest(PICKABLE);
+      if (!pick || isUi(pick)) continue;
+      return pick;
+    }
+    return null;
   }
   function q(id) { return document.querySelector("[" + DATA_ATTR + '="' + id + '"]'); }
   function getAssignedId(el) { return el.getAttribute(DATA_ATTR); }
@@ -196,6 +212,7 @@
     tokenSheet.textContent += "}\n";
     if (tokenCount === 0 && tokenSheet.textContent === ":root {\n}\n") tokenSheet.textContent = "";
     if (activeEl && overlayEl && !overlayEl.parentNode) { try { document.body.appendChild(overlayEl); updateOverlay(activeEl); } catch (e) {} }
+    if (activeEl && overlayEl && overlayEl.style.display !== "none") { try { updateOverlay(activeEl); } catch (e) {} }
     if (treeEl && treeEl.style.display !== "none" && engineOn) buildTreeBody();
     positionComments();
     rendering = false;
@@ -346,8 +363,10 @@
   }
   function select(el) {
     activeEl = el;
+    lastActiveEl = el;
     var id = ensureId(el);
     buildPanel();
+    showPanel();               // 关键：deselect() 会把面板 display:none，再次选中必须显式恢复
     syncPanelTo(el);
     positionPanelNear(el);
     highlight(el);
@@ -359,6 +378,11 @@
     if (panelEl) panelEl.style.display = "none";
     if (overlayEl) hideOverlay();
     if (treeEl) treeEl.style.display = "none";
+  }
+  function showPanel() {
+    if (!panelEl) return;
+    panelEl.style.display = "block";
+    panelEl.style.visibility = "visible";
   }
   function highlight(el) {
     if (!el) return;
@@ -415,8 +439,10 @@
     var moveH = overlayEl.querySelector("[data-ve-move]");
     var resizeHs = overlayEl.querySelectorAll("[data-ve-resize]");
     var drag = null;
+    var dragged = false;   // 本次交互是否真的发生了拖拽（用于区分"拖拽"与"点选"）
     function onMove(e) {
       if (!drag) return;
+      if (Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 3) drag.moved = true;
       if (drag.mode === "move") {
         var dx = e.clientX - drag.sx + drag.bx;
         var dy = e.clientY - drag.sy + drag.by;
@@ -441,22 +467,34 @@
     function onUp() {
       if (!drag) return;
       var el = drag.el, id = ensureId(el);
-      if (drag.mode === "move") {
-        var t = parseTranslate(el);
-        upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t.x) + "px," + Math.round(t.y) + "px)" });
-      } else {
-        var r = el.getBoundingClientRect();
-        var t2 = parseTranslate(el);
-        upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t2.x) + "px," + Math.round(t2.y) + "px)" });
-        upsert({ id: id, path: pathOf(el), kind: "style", prop: "width", value: Math.round(r.width) + "px" });
-        upsert({ id: id, path: pathOf(el), kind: "style", prop: "height", value: Math.round(r.height) + "px" });
+      dragged = !!drag.moved;
+      if (drag.moved) {
+        if (drag.mode === "move") {
+          var t = parseTranslate(el);
+          upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t.x) + "px," + Math.round(t.y) + "px)" });
+        } else {
+          var r = el.getBoundingClientRect();
+          var t2 = parseTranslate(el);
+          upsert({ id: id, path: pathOf(el), kind: "style", prop: "transform", value: "translate(" + Math.round(t2.x) + "px," + Math.round(t2.y) + "px)" });
+          upsert({ id: id, path: pathOf(el), kind: "style", prop: "width", value: Math.round(r.width) + "px" });
+          upsert({ id: id, path: pathOf(el), kind: "style", prop: "height", value: Math.round(r.height) + "px" });
+        }
       }
       el.style.removeProperty("width"); el.style.removeProperty("height"); el.style.removeProperty("transform");
       clearSnapGuides();
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       drag = null;
+      if (el === activeEl) { updateOverlay(el); positionPanelNear(el); }
     }
+    // 绿框本身不能"吃掉"点击：单击（非拖拽）时做穿透点选，
+    // 否则元素一旦被选中，它内部的任何子元素都点不到，看起来就像"点哪儿都没反应、面板再也不出现"。
+    moveH.addEventListener("click", function (e) {
+      if (dragged) { dragged = false; return; }
+      e.preventDefault(); e.stopPropagation();
+      var target = hitTest(e.clientX, e.clientY);
+      if (target) { if (target !== activeEl) select(target); else showPanel(); }
+    });
     moveH.addEventListener("mousedown", function (e) {
       if (!activeEl) return;
       e.preventDefault(); e.stopPropagation();
@@ -498,16 +536,17 @@
 
   // ---- 面板 --------------------------------------------------------------
   function buildPanel() {
-    if (panelEl) { document.body.appendChild(panelEl); return; }
+    if (panelEl) { document.body.appendChild(panelEl); showPanel(); return; }
     var p = document.createElement("div");
     p.setAttribute("data-ve-ui", "1");
-    p.style.cssText = "position:absolute;z-index:2147483600;width:300px;background:#fff;" +
+    p.style.cssText = "position:fixed;z-index:2147483600;width:300px;background:#fff;" +
       "border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18);" +
+      "max-height:calc(100vh - 16px);overflow:auto;overscroll-behavior:contain;" +
       "font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:#111;padding:10px;";
     var layoutOn = opts.features.indexOf("layout") >= 0;
     var styleOn = opts.features.indexOf("style") >= 0;
     p.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+      '<div data-ve-drag style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;cursor:move;user-select:none" title="拖动此处移动面板；双击恢复自动跟随">' +
         '<b style="font-size:13px">🛠 页面微调</b>' +
         '<span style="cursor:pointer;opacity:.6" data-ve-close>✕</span>' +
       '</div>' +
@@ -618,6 +657,38 @@
     // 事件
     p.addEventListener("click", function (e) { e.stopPropagation(); });
     p.querySelector("[data-ve-close]").addEventListener("click", function () { deselect(); });
+    // 拖动标题栏移动面板；双击恢复"自动跟随选中元素"
+    (function bindPanelDrag() {
+      var dh = p.querySelector("[data-ve-drag]");
+      if (!dh) return;
+      dh.addEventListener("mousedown", function (e) {
+        if (e.target && e.target.closest && e.target.closest("[data-ve-close]")) return;
+        e.preventDefault(); e.stopPropagation();
+        var r = p.getBoundingClientRect();
+        var ox = e.clientX - r.left, oy = e.clientY - r.top;
+        function mv(ev) {
+          panelUserPos = {
+            x: Math.max(0, Math.min(window.innerWidth - 40, Math.round(ev.clientX - ox))),
+            y: Math.max(0, Math.min(window.innerHeight - 20, Math.round(ev.clientY - oy))),
+          };
+          panelEl.style.left = panelUserPos.x + "px";
+          panelEl.style.top = panelUserPos.y + "px";
+        }
+        function up() {
+          document.removeEventListener("mousemove", mv);
+          document.removeEventListener("mouseup", up);
+          if (panelUserPos) { try { localStorage.setItem(POS_KEY, JSON.stringify(panelUserPos)); } catch (err) {} }
+          clampPanel();
+        }
+        document.addEventListener("mousemove", mv);
+        document.addEventListener("mouseup", up);
+      });
+      dh.addEventListener("dblclick", function () {
+        panelUserPos = null;
+        try { localStorage.removeItem(POS_KEY); } catch (err) {}
+        if (activeEl) positionPanelNear(activeEl);
+      });
+    })();
     if (opts.features.indexOf("tree") >= 0)
       p.querySelector("[data-ve-tree]").addEventListener("click", function () { toggleTree(); });
     p.querySelector("[data-ve-undo]").addEventListener("click", undo);
@@ -1004,14 +1075,48 @@
     return Object.keys(map).map(function (k) { return { name: k, value: map[k] }; });
   }
 
+  function clampPanel() {
+    if (!panelEl) return;
+    var M = 8;
+    var pw = panelEl.offsetWidth || 300, ph = panelEl.offsetHeight || 320;
+    var x = parseFloat(panelEl.style.left || "0"), y = parseFloat(panelEl.style.top || "0");
+    x = Math.max(M, Math.min(x, window.innerWidth - Math.min(pw, window.innerWidth - 2 * M) - M));
+    y = Math.max(M, Math.min(y, window.innerHeight - Math.min(ph, window.innerHeight - 2 * M) - M));
+    panelEl.style.left = Math.round(x) + "px";
+    panelEl.style.top = Math.round(y) + "px";
+  }
   function positionPanelNear(el) {
     if (!panelEl || !el) return;
+    var M = 8;
+    // 面板固定定位（position:fixed），全程用视口坐标：
+    // 这样即使宿主应用是"body 不滚、内部容器滚"（SaaS 常见外壳），面板也不会被 overflow:hidden 裁掉或跑到视口外。
+    panelEl.style.maxHeight = Math.max(180, window.innerHeight - M * 2) + "px";
+    showPanel();
+    var pw = panelEl.offsetWidth || 300;
+    var ph = panelEl.offsetHeight || 320;
+    // 用户手动拖过面板 -> 尊重用户的位置（仅夹到视口内），不再自动跟随
+    if (panelUserPos) { panelEl.style.left = panelUserPos.x + "px"; panelEl.style.top = panelUserPos.y + "px"; clampPanel(); return; }
     var r = el.getBoundingClientRect();
-    var x = Math.min(window.innerWidth - 310, r.left + window.scrollX);
-    var y = r.bottom + window.scrollY + 8;
-    if (y + 320 > window.innerHeight + window.scrollY) y = Math.max(window.scrollY, r.top + window.scrollY - 330);
-    panelEl.style.left = Math.max(8, x) + "px";
-    panelEl.style.top = y + "px";
+    var fitsY = function (yy) { return yy >= M && yy + ph <= window.innerHeight - M; };
+    var x, y;
+    if (fitsY(r.bottom + M)) { x = r.left; y = r.bottom + M; }                       // 1) 元素下方
+    else if (fitsY(r.top - ph - M)) { x = r.left; y = r.top - ph - M; }               // 2) 元素上方
+    else if (r.right + M + pw <= window.innerWidth - M) { x = r.right + M; y = r.top; } // 3) 元素右侧
+    else if (r.left - pw - M >= M) { x = r.left - pw - M; y = r.top; }                // 4) 元素左侧
+    else { x = window.innerWidth - pw - M; y = M; }                                   // 5) 贴右上，尽量少挡
+    if (x + pw > window.innerWidth - M) x = window.innerWidth - pw - M;
+    if (x < M) x = M;
+    if (y < M) y = M;
+    if (y + ph > window.innerHeight - M) y = Math.max(M, window.innerHeight - ph - M);
+    panelEl.style.left = Math.round(x) + "px";
+    panelEl.style.top = Math.round(y) + "px";
+  }
+  // 面板是否真的可见（在视口内、非隐藏）
+  function panelVisible() {
+    if (!panelEl) return false;
+    if (panelEl.style.display === "none") return false;
+    var r = panelEl.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
   }
 
   // ---- 图层树 ------------------------------------------------------------
@@ -1162,13 +1267,41 @@
   }
 
   // ---- 浮动开关 + 键盘 ---------------------------------------------------
+  function toast(msg) {
+    try {
+      var t = document.createElement("div");
+      t.setAttribute("data-ve-ui", "1");
+      t.textContent = msg;
+      t.style.cssText = "position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:2147483603;" +
+        "background:#111827;color:#fff;padding:8px 14px;border-radius:8px;font:13px sans-serif;" +
+        "box-shadow:0 6px 20px rgba(0,0,0,.3);opacity:0;transition:opacity .18s";
+      document.body.appendChild(t);
+      (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function () { t.style.opacity = "1"; });
+      setTimeout(function () {
+        t.style.opacity = "0";
+        setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 240);
+      }, 1800);
+    } catch (e) {}
+  }
+  function selectHint() {
+    toast("微调已开启：点击页面上的任意元素即可打开面板");
+  }
+
   function mountToggle() {
     var b = document.createElement("button");
     b.setAttribute("data-ve-ui", "1");
+    b.setAttribute("data-ve-toggle", "1");
     b.textContent = "🛠 微调";
-    b.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:2147483599;border:1px solid #6366f1;" +
+    // z-index 高于面板：面板浮在右下角时不会把开关按钮压在下面（否则会像"功能入口消失"）
+    b.style.cssText = "position:fixed;right:14px;bottom:14px;z-index:2147483602;border:1px solid #6366f1;" +
       "background:#6366f1;color:#fff;border-radius:999px;padding:8px 14px;font:13px sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(99,102,241,.4)";
     b.addEventListener("click", function () {
+      // 开着但面板不可见时，点按钮 = 把面板找回来（而不是把模式关掉，否则会像"功能入口彻底消失"）
+      if (engineOn && !panelVisible()) {
+        if (lastActiveEl && document.body.contains(lastActiveEl)) select(lastActiveEl);
+        else { selectHint(); }
+        return;
+      }
       engineOn = !engineOn;
       if (engineOn) {
         document.addEventListener("mouseover", onOver, true);
@@ -1176,6 +1309,8 @@
         b.textContent = "✓ 微调中";
         b.style.background = "#16a34a";
         if (commentLayer) commentLayer.style.display = "block";
+        // 重新打开时恢复上次选中的元素与面板，避免"关掉就再也打不开"
+        if (lastActiveEl && document.body.contains(lastActiveEl)) select(lastActiveEl);
       } else {
         document.removeEventListener("mouseover", onOver, true);
         document.removeEventListener("click", onPick, true);
@@ -1236,16 +1371,28 @@
   function init(userOpts) {
     Object.assign(opts, userOpts || {});
     plan.route = opts.route;
+    try {
+      var rawPos = localStorage.getItem(POS_KEY);
+      if (rawPos) { var pv = JSON.parse(rawPos); if (pv && typeof pv.x === "number" && typeof pv.y === "number") panelUserPos = pv; }
+    } catch (e) {}
     loadLocal();
     if (opts.autoFetch) loadRemote().then(renderAll); else renderAll();
     observe();
     mountToggle();
-    window.addEventListener("scroll", function () {
-      if (activeEl && overlayEl) updateOverlay(activeEl);
+    window.addEventListener("scroll", function (ev) {
+      // 面板内部滚动不要触发重新定位（capture 阶段会收到自家 UI 的 scroll）
+      if (ev && ev.target && ev.target.nodeType === 1 && isOurNode(ev.target)) return;
+      if (activeEl) {
+        if (overlayEl) updateOverlay(activeEl);
+        if (panelEl && panelEl.style.display !== "none") positionPanelNear(activeEl);
+      }
       if (engineOn && commentLayer) positionComments();
     }, true);
     window.addEventListener("resize", function () {
-      if (activeEl && overlayEl) updateOverlay(activeEl);
+      if (activeEl) {
+        if (overlayEl) updateOverlay(activeEl);
+        if (panelEl && panelEl.style.display !== "none") positionPanelNear(activeEl);
+      }
       if (engineOn && commentLayer) positionComments();
     });
     return api;
@@ -1261,6 +1408,15 @@
     render: renderAll,
     undo: undo,
     redo: redo,
+    getActive: function () { return activeEl; },
+    select: function (el) { if (el && el.nodeType === 1) select(el); },
+    panelVisible: panelVisible,
+    isOn: function () { return engineOn; },
+    resetPanelPos: function () {
+      panelUserPos = null;
+      try { localStorage.removeItem(POS_KEY); } catch (e) {}
+      if (activeEl) positionPanelNear(activeEl);
+    },
     addElement: function (type, position) { addElement(type, position); },
     duplicate: duplicateActive,
     listVariants: listVariants,

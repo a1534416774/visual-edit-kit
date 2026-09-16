@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>VisualEditKit Re-pro (SaaS-like layout)</title>
+  <style>
+    /* 模拟 SaaS 应用外壳：body 不滚动，内容在内部容器里滚 */
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { font: 14px sans-serif; }
+    #app-shell { height: 100%; display: flex; flex-direction: column; }
+    #topbar { height: 56px; background: #f3f4f6; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; padding: 0 16px; }
+    #content { flex: 1; overflow: auto; padding: 24px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
+    .tall { height: 1200px; background: linear-gradient(#fff, #eef2ff); }
+  </style>
+</head>
+<body>
+  <div id="app-shell">
+    <div id="topbar">项目列表 · 模拟 SaaS 外壳</div>
+    <div id="content">
+      <div class="card" id="card1">
+        <h3>卡片一</h3>
+        <p>用于测试拖拽/缩放后的面板。</p>
+        <button id="btn1">按钮一</button>
+        <button id="btn2">按钮二</button>
+      </div>
+      <div class="tall">长内容，用于制造内部滚动条</div>
+      <div class="card" id="card2"><h3>卡片二</h3></div>
+    </div>
+  </div>
+  <script src="ve-core.js"></script>
+  <script>
+    VisualEditKit.init({
+      route: "/repro",
+      features: ["text","color","hide","move","token","delete","layout","style","tree","comment","add","duplicate","variants"],
+      autoFetch: false
+    });
+  </script>
+</body>
+</html>

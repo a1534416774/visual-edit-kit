@@ -49,6 +49,16 @@ export interface VisualEditKitAPI {
   saveVariant(name: string): void;
   loadVariant(name: string): void;
   deleteVariant(name: string): void;
+  /** 当前选中的元素（未选中返回 null） */
+  getActive(): Element | null;
+  /** 以编程方式选中一个元素（会同步显示面板与绿框） */
+  select(el: Element): void;
+  /** 面板当前是否真的可见（显示中且在视口内） */
+  panelVisible(): boolean;
+  /** 微调模式是否开启 */
+  isOn(): boolean;
+  /** 清除用户手动拖动的面板位置，恢复自动跟随 */
+  resetPanelPos(): void;
 }
 
 declare const VisualEditKit: VisualEditKitAPI;
