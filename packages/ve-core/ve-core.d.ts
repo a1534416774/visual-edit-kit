@@ -36,6 +36,8 @@ export interface InitOptions {
 
 export interface VisualEditKitAPI {
   init(options?: InitOptions): VisualEditKitAPI;
+  /** 切换当前路由（页面）：保存旧路由方案、加载新路由方案；不重建监听器/UI */
+  setRoute(route: string): void;
   getPlan(): Plan;
   exportCSS(): string;
   exportJSON(): string;

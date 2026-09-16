@@ -1429,6 +1429,19 @@
   }
 
   // ---- 公共 API ----------------------------------------------------------
+  /** 切换当前路由（页面）：保存旧路由方案、加载新路由方案；不重建监听器/UI，避免重复挂载 */
+  function setRoute(route) {
+    persist();                                  // upsert 已即时持久化，这里再保一次更稳
+    activeEl = null; lastActiveEl = null;
+    if (overlayEl) hideOverlay();
+    if (treeEl) treeEl.style.display = "none";
+    if (panelEl && panelEl.style.display !== "none") panelEl.style.display = "none";
+    opts.route = route || "root";
+    plan = { route: opts.route, changes: [] };
+    loadLocal();                                // 读新路由的本地方案
+    assignAllIds();                             // 给新页面 DOM 补确定性 id
+    if (opts.autoFetch) loadRemote().then(renderAll); else renderAll();
+  }
   function init(userOpts) {
     Object.assign(opts, userOpts || {});
     plan.route = opts.route;
@@ -1461,6 +1474,7 @@
   }
   var api = {
     init: init,
+    setRoute: setRoute,
     getPlan: function () { return exportJSON(); },
     exportCSS: exportCSS,
     exportJSON: function () { return JSON.stringify(exportJSON(), null, 2); },
