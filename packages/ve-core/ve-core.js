@@ -372,6 +372,13 @@
       if (panelEl) { syncPanelTo(activeEl); renderChangesList(); }
     });
 
+    // 设计令牌懒加载：仅在展开「🎨 设计令牌」时扫描样式表，
+    // 避免每次选中元素都做全量 :root 变量扫描（大项目上很重）。
+    if (opts.features.indexOf("token") >= 0) {
+      var det = p.querySelector("details");
+      if (det) det.addEventListener("toggle", function () { if (det.open) renderTokens(); });
+    }
+
     panelEl = p;
     document.body.appendChild(p);
   }
@@ -398,7 +405,6 @@
       panelEl.querySelector("[data-ve-bg]").value = rgbToHex(getComputedStyle(el).backgroundColor) || "#ffffff";
       panelEl.querySelector("[data-ve-fg]").value = rgbToHex(getComputedStyle(el).color) || "#000000";
     }
-    if (opts.features.indexOf("token") >= 0) renderTokens();
     renderChangesList();
   }
   function renderChangesList() {
@@ -469,10 +475,35 @@
   }
 
   // ---- SPA 重渲染保护 ----------------------------------------------------
-  var mo;
+  var mo, pendingRender = false;
+  function isOurUi(node) {
+    if (!node) return false;
+    var el = node.nodeType === 1 ? node : node.parentNode;
+    return !!(el && el.closest && el.closest("[data-ve-ui]"));
+  }
+  // 合并同帧内的多次变更，且只重放"页面真实节点"的增删。
+  function scheduleRender() {
+    if (pendingRender) return;
+    pendingRender = true;
+    var raf = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 16); };
+    raf(function () { pendingRender = false; renderAll(); });
+  }
   function observe() {
     if (mo) mo.disconnect();
-    mo = new MutationObserver(function () { renderAll(); if (panelEl && activeEl) syncPanelTo(activeEl); });
+    mo = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        var rec = records[i];
+        // 1) 变更发生在我们自己的 UI（面板/浮动按钮）内部 → 忽略
+        if (isOurUi(rec.target)) continue;
+        // 2) 增删的节点全部是我们自己的 UI → 忽略
+        var nodes = Array.prototype.slice.call(rec.addedNodes)
+          .concat(Array.prototype.slice.call(rec.removedNodes));
+        if (nodes.length && nodes.every(isOurUi)) continue;
+        // 3) 其余（页面真实节点被 SPA 重渲染）→ 合并后重放一次
+        scheduleRender();
+        return;
+      }
+    });
     mo.observe(document.body, { childList: true, subtree: true, attributes: false });
   }
 
