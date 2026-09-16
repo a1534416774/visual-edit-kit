@@ -31,7 +31,7 @@
     "section,article,header,footer,nav,main";
 
   var opts = {
-    route: location.pathname,
+    route: (typeof location !== "undefined" ? location.pathname : "/"),
     serverUrl: null,
     token: null,
     features: ["text", "color", "hide", "move", "token", "delete"],
