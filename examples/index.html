@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VisualEditKit · 最小可跑示例</title>
+  <!-- 设计令牌示例：token 编辑会改写 :root 变量 -->
+  <style>
+    :root {
+      --brand: #4f46e5;
+      --radius: 10px;
+    }
+    body { font: 15px/1.6 system-ui, sans-serif; margin: 0; padding: 40px; background: #fafafa; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: var(--radius); padding: 20px; max-width: 720px; margin: 0 auto; }
+    h1 { color: var(--brand); }
+    .btn { background: var(--brand); color: #fff; border: none; border-radius: var(--radius); padding: 10px 16px; cursor: pointer; }
+    .row { display: flex; gap: 12px; margin-top: 16px; }
+    .tag { background: #eef2ff; color: #4338ca; padding: 4px 10px; border-radius: 999px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>报价系统 · 控制台</h1>
+    <p>这是一段示例文案，点右下角「🛠 微调」后可以改文字、配色、隐藏、排序、甚至删掉某个区块。</p>
+    <div class="row">
+      <button class="btn">新建项目</button>
+      <button class="btn">导出报价书</button>
+      <span class="tag">已认证</span>
+    </div>
+    <p style="margin-top:24px;color:#6b7280">提示：点元素即可选中，面板里改完实时生效；「导 CSS / 导 JSON」下载方案，
+      若配置了 serverUrl 还可用「保存后端」落盘，供团队或 AI 在源码里落地。</p>
+  </div>
+
+  <!-- 引入 ve-core（生产里放 public/vendor/ve-core.js） -->
+  <script src="../packages/ve-core/ve-core.js"></script>
+  <script>
+    // route 按页面隔离；serverUrl 可选（演示用本地后端 http://localhost:5055/visual-edit）
+    const server = location.search.includes('server')
+      ? 'http://localhost:5055/visual-edit' : null;
+    VisualEditKit.init({
+      route: location.pathname,
+      serverUrl: server,
+      features: ['text', 'color', 'hide', 'move', 'token', 'delete'],
+    });
+  </script>
+</body>
+</html>
