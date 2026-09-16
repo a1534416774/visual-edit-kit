@@ -844,8 +844,49 @@
         if (name) loadVariant(name);
       });
     }
-    p.querySelector("[data-ve-export-css]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".css", exportCSS(), "text/css"); });
-    p.querySelector("[data-ve-export-json]").addEventListener("click", function () { download("visual-edit-" + slug(opts.route) + ".json", JSON.stringify(exportJSON(), null, 2), "application/json"); });
+    function showExportModal(name, content, isCSS) {
+      var ov = document.createElement("div");
+      ov.setAttribute("data-ve-ui", "1");
+      ov.style.cssText = "position:fixed;inset:0;z-index:2147483605;background:rgba(0,0,0,.45);" +
+        "display:flex;align-items:center;justify-content:center;font:14px sans-serif";
+      ov.innerHTML =
+        '<div style="background:#fff;border-radius:12px;width:min(560px,92vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.3)">' +
+          '<div style="padding:12px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
+            '<b>导出：' + name + '</b><span style="cursor:pointer;opacity:.6" data-ve-x>✕</span>' +
+          '</div>' +
+          '<div style="padding:10px 16px;color:#6b7280;font-size:12px">文件已尝试保存到浏览器默认下载文件夹（如 此电脑\\下载 / Downloads）。如未找到文件，请在下方复制内容，手动新建 ' + name + ' 保存即可。</div>' +
+          '<textarea data-ve-out readonly style="flex:1;min-height:240px;margin:0 16px 10px;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px;font:12px/1.5 Consolas,monospace;resize:none"></textarea>' +
+          '<div style="padding:0 16px 14px;display:flex;gap:8px;justify-content:flex-end">' +
+            '<button data-ve-copy style="border:1px solid #0ea5e9;border-radius:6px;background:#f0f9ff;color:#0369a1;cursor:pointer;padding:6px 14px">复制内容</button>' +
+            '<button data-ve-dl style="border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;color:#15803d;cursor:pointer;padding:6px 14px">重新下载</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(ov);
+      ov.querySelector("[data-ve-out]").value = content;
+      ov.querySelector("[data-ve-x]").addEventListener("click", function () { ov.remove(); });
+      ov.addEventListener("click", function (e) { if (e.target === ov) ov.remove(); });
+      ov.querySelector("[data-ve-copy]").addEventListener("click", function () {
+        var ta = ov.querySelector("[data-ve-out]"); ta.select();
+        var done = false;
+        try { done = document.execCommand("copy"); } catch (e) {}
+        if (!done && navigator.clipboard) { try { navigator.clipboard.writeText(content); done = true; } catch (e) {} }
+        toast(done ? "内容已复制到剪贴板 ✓" : "复制失败，请手动框选文本复制");
+      });
+      ov.querySelector("[data-ve-dl]").addEventListener("click", function () {
+        try { download(name, content, isCSS ? "text/css" : "application/json"); toast("已重新尝试下载 " + name); }
+        catch (e) { toast("下载仍失败，请用上方复制"); }
+      });
+    }
+    function doExport(kind) {
+      if (!plan.changes.length) { toast("本页暂无微调改动，无需导出"); return; }
+      var isCSS = kind === "css";
+      var name = "visual-edit-" + slug(opts.route) + (isCSS ? ".css" : ".json");
+      var content = isCSS ? exportCSS() : JSON.stringify(exportJSON(), null, 2);
+      try { download(name, content, isCSS ? "text/css" : "application/json"); } catch (e) {}
+      showExportModal(name, content, isCSS);
+    }
+    p.querySelector("[data-ve-export-css]").addEventListener("click", function () { doExport("css"); });
+    p.querySelector("[data-ve-export-json]").addEventListener("click", function () { doExport("json"); });
     p.querySelector("[data-ve-ai]").addEventListener("click", function () {
       var ok = copyText(exportAI());
       alert(ok ? "AI 指令已复制到剪贴板 ✓\n粘贴给任意编码 Agent 即可落地。" : "复制失败，已为你弹出指令窗口");
